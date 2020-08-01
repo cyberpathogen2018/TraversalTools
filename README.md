@@ -1,20 +1,16 @@
 
-# diverse-inclusion
+# pylfi
 Simple tool to assist with directory traversal, local file inclusion brute forcing.
 
 Some payloads can be found as part of Burp Suite: https://github.com/tennc/fuzzdb/tree/master/dict/BURP-PayLoad/LFI
 
-
-TODO: null byte technique
-
 TODO: enable RFI with a simple-webserver and reverse shell that can be injected.
-
 TODO: 
 
 
 
 ```
-usage: divinc.py [-h] [-u URL] [-p PATH_TRAVERSAL_STRING] [-w WORDLIST] [-v] [-o OUTDIR] [-t] [-r REMOTE]
+usage: pylfi.py [-h] [-u URL] [-p PATH_TRAVERSAL_STRING] [-w WORDLIST] [-v] [-o OUTDIR] [-t] [-r REMOTE]
 
 Automates directory traversal and LFI checks.
 
