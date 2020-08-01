@@ -157,7 +157,7 @@ def main(args):
 	# Build out the base URL from commandline arguments to test against
 	
 	base_url=args.url
-	path_traversal_escape=args.path_traversal_string
+	path_traversal_escape=args.traversal_string
 	outdir=args.outdir
 
 	path=base_url+path_traversal_escape
@@ -186,21 +186,37 @@ if __name__== '__main__':
 	                                description = "Automates directory traversal and LFI checks.",
 	                                epilog = "As an alternative to the commandline, params can be placed in a file, one per line, and specified on the commandline like '%(prog)s @params.conf'.",
 	                                fromfile_prefix_chars = '@' )
-	parser.add_argument(
-	                      "-u",
-	                      "--url",
-	                      help = "Base URL to directory traversal vulnerability.  e.g http://hostname/path?arg=",
-	                      metavar = "URL")
 
 	parser.add_argument(
-						  "-p",
-						  "--path_traversal_string",
-						  default="../../../..",
-						  help="The string required to reach the root directory. Default to  ../../../..")
+	                      "url",
+	                      help = "Base URL to directory traversal vulnerability.  e.g http://hostname/path?arg=")
+
+
 	parser.add_argument(
-	                      "-w",
-	                      "--wordlist",
+						  "traversal_string",
+						  help="The string required to reach the root directory, e.g. ../../../..")
+	parser.add_argument(
+	                      "wordlist",
 	                      help="Specify an LFI wordlist. Wordlists are expected to be absolute paths on target system")
+
+#	parser.add_argument(
+#	                      "-u",
+#	                      "--url",
+#	                      help = "Base URL to directory traversal vulnerability.  e.g http://hostname/path?arg=",
+#	                      metavar = "URL")
+
+#	parser.add_argument(
+#						  "-p",
+#						  "--traversal_string",
+#						  default="../../../..",
+#						  help="The string required to reach the root directory. Default to  ../../../..")
+
+#	parser.add_argument(
+#	                      "-w",
+#	                      "--wordlist",
+#	                      help="Specify an LFI wordlist. Wordlists are expected to be absolute paths on target system")
+
+
 	parser.add_argument(
 	                      "-v",
 	                      "--verbose",
@@ -227,10 +243,10 @@ if __name__== '__main__':
 						  help="Appends a null byte (0x00) to each request. This may allow requests to web apps that automatically append a file extension.",
 						  action="store_true")
 
-	parser.add_argument(
-						  "-r",
-						  "--remote",
-						  help="TODO: Not Implimented. Starts a simple webserver and attempts a remote file inclusion ")
+#	parser.add_argument(
+#						  "-r",
+#						  "--remote",
+#						  help="TODO: Not Implimented. Starts a simple webserver and attempts a remote file inclusion ")
 
 
 	if len(sys.argv)==1:
