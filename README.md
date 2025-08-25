@@ -1,7 +1,9 @@
 # Directory Traversal Tools
 
 ## pylfi
-Simple tool to assist with directory traversal, local file inclusion brute forcing. 
+Simple tool to assist with directory traversal, and eventually local file inclusion brute forcing. 
+
+(Yes I know it doesn't do LFI... yet. It will. I really liked the name though.)
 
 Run it with the target URL, the traversal string, 
 
